@@ -1,59 +1,62 @@
-/* Seeds the database with an admin user, default categories/locations, and
- * the risk records from the user's exported CSV (scripts/seed-risks.csv).
+/* Seeds the database with an admin user, config lists, and the real risk
+ * register data extracted from the Sansom Risk Register spreadsheet
+ * (scripts/seed-risks-real.json — Tactical, Strategic-Business, and
+ * Procedural sheets). Idempotent: safe to run on every deploy.
  * Run with: npm run db:seed
  */
 import fs from "node:fs";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { db, schema, ensureSchema } from "../src/lib/db";
 import { hashPassword } from "../src/lib/auth";
 import { uid } from "../src/lib/ids";
+import { computeScore } from "../src/lib/risk-scoring";
 
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else if (c === "\r") {
-      // skip
-    } else {
-      field += c;
-    }
-  }
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+type RealRisk = {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  location: string;
+  ownerName: string;
+  inherentLikelihood: number | null;
+  inherentConsequence: number | null;
+  inherentScore: number | null;
+  residualLikelihood: number | null;
+  residualConsequence: number | null;
+  residualScore: number | null;
+  statusRaw: string;
+  nextReviewDate: string | null;
+  controlText: string;
+};
+
+// IDs from an earlier placeholder/demo seed that predates the real import —
+// removed so the real spreadsheet data isn't mixed with sample rows.
+const LEGACY_PLACEHOLDER_IDS = [
+  "RSK-022", "RSK-063", "RSK-031", "RSK-088", "RSK-045", "RSK-014",
+  "RSK-052", "RSK-071", "RSK-97", "RSK-096", "RSK-094", "RSK-092",
+  "RSK-091", "RSK-090", "RSK-095", "RSK-089", "RSK-093",
+];
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  "human resource": "Human Resources",
+  "hr": "Human Resources",
+  "environmental, safety": "Environmental & Safety",
+};
+
+function normalizeCategory(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  return CATEGORY_ALIASES[key] || raw.trim();
 }
 
-function ddmmyyyyToIso(s: string): string | null {
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s.trim());
-  if (!m) return null;
-  const [, dd, mm, yyyy] = m;
-  return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+function mapStatus(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  if (key === "open") return "Active";
+  if (key === "closed") return "Closed";
+  if (key === "monitor" || key === "monitored") return "Monitored";
+  if (key.includes("treatment")) return "Under treatment";
+  if (key === "draft") return "Draft";
+  return "Active";
 }
 
 async function main() {
@@ -77,22 +80,14 @@ async function main() {
     console.log("Admin user already exists, skipping.");
   }
 
-  // --- Categories & locations ---
-  const categoryNames = [
-    "Plant and equipment",
-    "Psychosocial",
-    "Working at height",
-    "Manual handling",
-    "Hazardous substances",
-    "Contractor management",
-  ];
-  const locationNames = [
-    "Brookvale",
-    "Rosehill",
-    "Port Melbourne",
-    "Northgate",
-    "Head office",
-  ];
+  // --- Real risk data ---
+  const jsonPath = path.join(__dirname, "seed-risks-real.json");
+  const realRisks: RealRisk[] = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+
+  // --- Categories & locations, derived from the real data ---
+  const categoryNames = [...new Set(realRisks.map((r) => normalizeCategory(r.category)).filter(Boolean))].sort();
+  const locationNames = [...new Set(realRisks.map((r) => r.location).filter(Boolean))].sort();
+
   const existingCats = await db.select().from(schema.categories);
   for (const [i, name] of categoryNames.entries()) {
     if (!existingCats.find((c) => c.name === name)) {
@@ -106,51 +101,56 @@ async function main() {
     }
   }
 
-  // --- Risks from CSV ---
-  const csvPath = path.join(__dirname, "seed-risks.csv");
-  const text = fs.readFileSync(csvPath, "utf8");
-  const rows = parseCsv(text);
-  const [header, ...data] = rows;
-  const idx = (name: string) => header.findIndex((h) => h.trim().toUpperCase() === name);
+  // --- Remove legacy placeholder demo risks (and their controls) ---
+  for (const id of LEGACY_PLACEHOLDER_IDS) {
+    const existing = await db.select().from(schema.risks).where(eq(schema.risks.id, id));
+    if (existing.length) {
+      await db.delete(schema.controls).where(eq(schema.controls.riskId, id));
+      await db.delete(schema.risks).where(eq(schema.risks.id, id));
+    }
+  }
 
+  // --- Import real risks + one control each from the mitigation text ---
   const existingRisks = await db.select({ id: schema.risks.id }).from(schema.risks);
   const existingIds = new Set(existingRisks.map((r) => r.id));
 
   let inserted = 0;
-  for (const r of data) {
-    const id = r[idx("ID")]?.trim();
-    if (!id || existingIds.has(id)) continue;
-    const title = r[idx("RISK")]?.trim() || "(untitled — imported)";
-    const owner = r[idx("OWNER")]?.trim() || "";
-    const category = r[idx("CATEGORY")]?.trim() || "";
-    const location = r[idx("LOCATION")]?.trim() || "";
-    const nextReview = ddmmyyyyToIso(r[idx("NEXT REVIEW")] || "");
-    const inherentScore = r[idx("INHERENT SCORE")]?.trim();
-    const residualScore = r[idx("RESIDUAL SCORE")]?.trim();
-    const status = r[idx("STATUS")]?.trim() || "Draft";
-
+  for (const r of realRisks) {
+    if (existingIds.has(r.id)) continue;
+    const inherentScore = r.inherentScore ?? computeScore(r.inherentLikelihood, r.inherentConsequence);
+    const residualScore = r.residualScore ?? computeScore(r.residualLikelihood, r.residualConsequence);
     await db.insert(schema.risks).values({
-      id,
-      title,
-      description: "",
-      category,
-      location,
-      ownerName: owner,
-      inherentLikelihood: null,
-      inherentConsequence: null,
-      inherentScore: inherentScore ? parseInt(inherentScore, 10) : null,
-      residualLikelihood: null,
-      residualConsequence: null,
-      residualScore: residualScore ? parseInt(residualScore, 10) : null,
-      status,
-      nextReviewDate: nextReview,
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      category: normalizeCategory(r.category),
+      location: r.location,
+      ownerName: r.ownerName,
+      inherentLikelihood: r.inherentLikelihood,
+      inherentConsequence: r.inherentConsequence,
+      inherentScore,
+      residualLikelihood: r.residualLikelihood,
+      residualConsequence: r.residualConsequence,
+      residualScore,
+      status: mapStatus(r.statusRaw),
+      nextReviewDate: r.nextReviewDate,
       source: "import",
       createdAt: now,
       updatedAt: now,
     });
+    if (r.controlText) {
+      await db.insert(schema.controls).values({
+        id: uid("ctl"),
+        riskId: r.id,
+        description: r.controlText,
+        type: "administrative",
+        implemented: false,
+        createdAt: now,
+      });
+    }
     inserted++;
   }
-  console.log(`Seeded ${inserted} risk records from ${csvPath} (${existingIds.size} already present).`);
+  console.log(`Seeded ${inserted} risk records from ${jsonPath} (${existingIds.size} already present).`);
 }
 
 main()
