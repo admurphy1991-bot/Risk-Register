@@ -44,39 +44,45 @@ export async function POST(req: NextRequest) {
   let finalText = "";
   const proposedPlans: { planId: string; summary: string; opsCount: number }[] = [];
 
-  for (let turn = 0; turn < 6; turn++) {
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
-      max_tokens: 1500,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
-      messages,
-    });
-
-    const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-    finalText = textBlocks.map((b) => b.text).join("\n").trim() || finalText;
-
-    if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
-      break;
-    }
-
-    messages.push({ role: "assistant", content: response.content });
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const use of toolUses) {
-      const result = await executeTool(use.name, (use.input as Record<string, unknown>) || {});
-      if (use.name === "propose_change_plan" && result && typeof result === "object" && "planId" in result) {
-        const r = result as { planId: string; opsCount: number };
-        proposedPlans.push({ planId: r.planId, summary: String((use.input as Record<string, unknown>)?.summary || ""), opsCount: r.opsCount });
-      }
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: use.id,
-        content: JSON.stringify(result),
+  try {
+    for (let turn = 0; turn < 6; turn++) {
+      const response = await client.messages.create({
+        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+        max_tokens: 1500,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages,
       });
+
+      const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+      finalText = textBlocks.map((b) => b.text).join("\n").trim() || finalText;
+
+      if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
+        break;
+      }
+
+      messages.push({ role: "assistant", content: response.content });
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const use of toolUses) {
+        const result = await executeTool(use.name, (use.input as Record<string, unknown>) || {});
+        if (use.name === "propose_change_plan" && result && typeof result === "object" && "planId" in result) {
+          const r = result as { planId: string; opsCount: number };
+          proposedPlans.push({ planId: r.planId, summary: String((use.input as Record<string, unknown>)?.summary || ""), opsCount: r.opsCount });
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: JSON.stringify(result),
+        });
+      }
+      messages.push({ role: "user", content: toolResults });
     }
-    messages.push({ role: "user", content: toolResults });
+  } catch (err) {
+    console.error("chat route error:", err);
+    const message = err instanceof Anthropic.APIError ? `${err.status} ${err.name}: ${err.message}` : String(err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: `Chat failed: ${message}` }, { status: 500 });
   }
 
   return NextResponse.json({
