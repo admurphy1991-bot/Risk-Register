@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import TaSettings from "@/components/settings/TaSettings";
 
 type ApiKey = {
   id: string;
@@ -95,8 +96,10 @@ export default function SettingsPage() {
     <div className="max-w-3xl space-y-10">
       <div>
         <h1 className="text-xl font-semibold tracking-tight mb-1">Settings</h1>
-        <p className="text-sm text-neutral-500">API access, integrations, and the audit trail.</p>
+        <p className="text-sm text-neutral-500">TA workflow, users, API access, integrations, and the audit trail.</p>
       </div>
+
+      <TaSettings />
 
       <section>
         <h2 className="text-sm font-semibold mb-1">API keys</h2>

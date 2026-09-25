@@ -41,7 +41,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "propose_change_plan",
     description:
-      "Propose a set of creates/updates/deletes to risks and/or controls. This does NOT write to the register — it stages a reviewable plan that the user must explicitly apply in the UI (mirrors the 'change plan' pattern: nothing is written until they hit Apply). Always use this instead of describing changes in prose when the user asks you to add, edit, or remove something. Likelihood and consequence are each 1-5 (1=rare/insignificant, 5=almost certain/catastrophic); score is computed automatically as likelihood x consequence.",
+      "Propose a set of creates/updates/deletes to risks and/or controls. This does NOT write to the register — it stages a reviewable plan that the user must explicitly apply in the UI (mirrors the 'change plan' pattern: nothing is written until they hit Apply). Always use this instead of describing changes in prose when the user asks you to add, edit, or remove something. Likelihood and consequence are each 1-5 (likelihood 1 Rare … 5 Almost Certain; consequence 1 Minor, 2 Medium, 3 Serious, 4 Major, 5 Catastrophic); score is computed automatically as likelihood x consequence.",
     input_schema: {
       type: "object",
       properties: {

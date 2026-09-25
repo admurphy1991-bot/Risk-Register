@@ -5,10 +5,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SessionUser } from "@/lib/auth";
 import ChatPanel from "@/components/ChatPanel";
+import { ROLE_LABELS } from "@/lib/roles";
 
 const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/register", label: "Risk register" },
+  { href: "/tas", label: "Task analyses" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -27,12 +29,11 @@ export default function Shell({ user, children }: { user: SessionUser; children:
     <div className="min-h-screen flex flex-col bg-background">
       <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-5 h-14 flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-accent flex items-center justify-center text-white text-xs font-semibold">
-              R
-            </div>
-            <span className="font-semibold text-sm tracking-tight">Sansom Risk Register</span>
-          </div>
+          <Link href="/" className="flex items-center gap-2.5 shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element -- small static logo, no optimisation needed */}
+            <img src="/sansom-logo.jpg" alt="Sansom" className="h-5 w-auto" />
+            <span className="font-medium text-xs text-neutral-500 tracking-tight hidden md:inline">Risk Register</span>
+          </Link>
           <nav className="flex items-center gap-1 text-sm">
             {NAV.map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -56,7 +57,7 @@ export default function Shell({ user, children }: { user: SessionUser; children:
             >
               <span className="text-sm">✦</span> Ask Risk AI
             </button>
-            <span className="text-xs text-neutral-500 hidden sm:inline">{user.name}</span>
+            <span className="text-xs text-neutral-500 hidden sm:inline">{user.name} · {ROLE_LABELS[user.role] ?? user.role}</span>
             <button onClick={logout} className="text-xs text-neutral-500 hover:text-neutral-800">
               Sign out
             </button>

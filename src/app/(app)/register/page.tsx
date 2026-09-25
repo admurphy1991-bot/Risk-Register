@@ -12,7 +12,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "all", label: "Risk register" },
   { id: "category", label: "By category" },
   { id: "location", label: "By location" },
-  { id: "high", label: "High and extreme" },
+  { id: "high", label: "High and critical" },
   { id: "review", label: "Review due" },
 ];
 
@@ -53,7 +53,7 @@ export default function RegisterPage() {
     if (view === "high") {
       rows = rows.filter((r) => {
         const level = scoreLevel(r.residualScore ?? r.inherentScore ?? null);
-        return level === "High" || level === "Extreme";
+        return level === "High" || level === "Critical";
       });
     }
     if (view === "review") {

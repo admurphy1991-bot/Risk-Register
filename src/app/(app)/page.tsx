@@ -55,7 +55,7 @@ export default async function DashboardPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label="Total risks" value={stats.total} sub={`${stats.open} open`} />
-        <StatTile label="High / extreme" value={stats.highExtreme} sub="by residual score" />
+        <StatTile label="High / critical" value={stats.highCritical} sub="by residual score" />
         <StatTile label="Reviews overdue" value={stats.overdueReview} sub={`${stats.reviewDueSoon} due in 30 days`} />
         <StatTile label="Register coverage" value={`${stats.registerCoverage}%`} sub="risks with a score" />
       </div>
@@ -66,10 +66,10 @@ export default async function DashboardPage() {
           <AppetiteBar label="Reviews overdue" value={stats.overdueReview} max={Math.max(5, stats.total)} breach={stats.overdueReview > 0} />
           <AppetiteBar label="Register coverage" value={stats.registerCoverage} max={100} breach={stats.registerCoverage < 90} />
           <AppetiteBar
-            label="High / extreme residual risks"
-            value={stats.highExtreme}
+            label="High / critical residual risks"
+            value={stats.highCritical}
             max={Math.max(5, stats.total)}
-            breach={stats.highExtreme > Math.max(2, Math.round(stats.total * 0.2))}
+            breach={stats.highCritical > Math.max(2, Math.round(stats.total * 0.2))}
           />
         </div>
 

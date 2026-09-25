@@ -8,6 +8,8 @@ const SESSION_COOKIE = "rr_session";
 const secretEnv = process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me";
 const secret = new TextEncoder().encode(secretEnv);
 
+export { USER_ROLES, ROLE_LABELS } from "@/lib/roles";
+
 export type SessionUser = {
   id: string;
   name: string;
@@ -49,17 +51,19 @@ export async function getSession(): Promise<SessionUser | null> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  let userId: string;
   try {
     const { payload } = await jwtVerify(token, secret);
-    return {
-      id: payload.id as string,
-      name: payload.name as string,
-      email: payload.email as string,
-      role: payload.role as string,
-    };
+    userId = payload.id as string;
   } catch {
     return null;
   }
+  // Re-read the user so role changes and removed accounts take effect
+  // immediately rather than when the 30-day cookie expires.
+  const rows = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+  const user = rows[0];
+  if (!user) return null;
+  return { id: user.id, name: user.name, email: user.email, role: user.role };
 }
 
 export async function requireUser(): Promise<SessionUser | null> {

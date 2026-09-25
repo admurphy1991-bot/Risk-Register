@@ -1,5 +1,5 @@
 import { db, schema } from "@/lib/db";
-import { scoreLevel } from "@/lib/risk-scoring";
+import { isHighOrCritical } from "@/lib/risk-scoring";
 
 export async function getDashboardStats() {
   const risks = await db.select().from(schema.risks);
@@ -8,10 +8,7 @@ export async function getDashboardStats() {
 
   const total = risks.length;
   const open = risks.filter((r) => r.status !== "Closed").length;
-  const highExtreme = risks.filter((r) => {
-    const level = scoreLevel(r.residualScore ?? r.inherentScore ?? null);
-    return level === "High" || level === "Extreme";
-  }).length;
+  const highCritical = risks.filter((r) => isHighOrCritical(r.residualScore ?? r.inherentScore ?? null)).length;
   const overdueReview = risks.filter((r) => r.nextReviewDate && new Date(r.nextReviewDate) < now).length;
   const reviewDueSoon = risks.filter(
     (r) => r.nextReviewDate && new Date(r.nextReviewDate) >= now && new Date(r.nextReviewDate) <= in30
@@ -29,5 +26,5 @@ export async function getDashboardStats() {
 
   const registerCoverage = total ? Math.round(((total - draftOrMissingScore) / total) * 100) : 0;
 
-  return { total, open, highExtreme, overdueReview, reviewDueSoon, registerCoverage, byCategory, byLocation, byStatus };
+  return { total, open, highCritical, overdueReview, reviewDueSoon, registerCoverage, byCategory, byLocation, byStatus };
 }
