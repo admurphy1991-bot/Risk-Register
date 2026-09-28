@@ -31,6 +31,39 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
 
 const ACCEPT = ".pdf,.docx,.txt,.md,.csv,.eml,.png,.jpg,.jpeg,.webp";
 
+type ExtractResult = { applied: string[]; kept: string[]; notes: string | null; extracted: Record<string, unknown> };
+
+// Human labels for header fields, used in the "filled from documents" summary.
+const FIELD_LABELS: Record<string, string> = {
+  jobNumber: "Job number",
+  projectName: "Project name",
+  taDate: "Date",
+  siteAddress: "Location",
+  mainContractor: "Main contractor",
+  siteContactName: "Site contact",
+  siteContactPhone: "Site contact phone",
+  contractManager: "Sansom contract manager",
+  contractManagerPhone: "Sansom contact phone",
+  workType: "Work type",
+  overview: "Overview of the work",
+  permits: "Permits",
+  plant: "Plant & equipment",
+  chemicals: "Chemicals",
+  ppe: "PPE",
+};
+// Fields we expect a proposal to contain — used to list what wasn't found.
+const EXPECTED_FROM_DOCS = ["jobNumber", "projectName", "siteAddress", "mainContractor", "siteContactName", "workType", "overview"];
+
+function describeValue(key: string, value: unknown): string {
+  if (Array.isArray(value)) {
+    if (key === "plant") return value.map((p) => (p as PlantItem).item).join(", ");
+    if (key === "chemicals") return value.map((c) => (c as ChemicalItem).name).join(", ");
+    if (key === "ppe") return value.map((k) => PPE_OPTIONS.find((o) => o.key === k)?.label ?? k).join(", ");
+    return value.join(", ");
+  }
+  return String(value ?? "");
+}
+
 export default function TaBuilder({ taId, user }: { taId: string; user: { id: string; name: string; role: string } }) {
   const router = useRouter();
   const [ta, setTa] = useState<TaFull | null>(null);
@@ -40,6 +73,11 @@ export default function TaBuilder({ taId, user }: { taId: string; user: { id: st
   const [tab, setTab] = useState<Tab>("documents");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<ExtractResult | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const rerunExtract = useRef(false);
+  const extractingRef = useRef(false);
 
   // --- Autosave plumbing -------------------------------------------------
   const pendingHeader = useRef<HeaderPatch>({});
@@ -160,6 +198,36 @@ export default function TaBuilder({ taId, user }: { taId: string; user: { id: st
 
   const registerTitles = useMemo(() => new Map(register.map((r) => [r.id, r.title])), [register]);
 
+  // Reads the uploaded documents with Claude and fills the project details.
+  // Runs automatically after an upload (and on reaching step 2 if the files
+  // were never read); the server only fills empty or previously AI-filled
+  // fields, so it never overwrites what someone typed.
+  const runExtract = useCallback(async () => {
+    if (extractingRef.current) {
+      rerunExtract.current = true; // more files arrived mid-read — read again after
+      return;
+    }
+    extractingRef.current = true;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      do {
+        rerunExtract.current = false;
+        await flush();
+        const res = await fetch(`/api/tas/${taId}/extract`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Couldn't read the documents");
+        setTa(data.ta);
+        setExtractResult({ applied: data.applied, kept: data.kept, notes: data.notes, extracted: data.extracted || {} });
+      } while (rerunExtract.current);
+    } catch (err) {
+      setExtractError((err as Error).message);
+    } finally {
+      extractingRef.current = false;
+      setExtracting(false);
+    }
+  }, [flush, taId]);
+
   if (loadError) {
     return (
       <div className="py-16 text-center">
@@ -173,10 +241,22 @@ export default function TaBuilder({ taId, user }: { taId: string; user: { id: st
   const editable = EDITABLE_TA_STATUSES.includes(ta.status);
   const problems = validateForSubmission(ta);
 
+  const neverRead = ta.files.length > 0 && !ta.events.some((e) => e.type === "ai_extracted") && !extractResult;
+
   async function changeTab(next: Tab) {
     await flush();
     setTab(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Documents were uploaded but never read (e.g. "Continue" was clicked) —
+    // read them now so step 2 isn't left for manual entry.
+    if (next === "details" && aiConfigured && neverRead && !extracting) void runExtract();
+  }
+
+  function onFilesUploaded() {
+    if (!aiConfigured) return;
+    setTab("details");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    void runExtract();
   }
 
   async function deleteDraft() {
@@ -253,9 +333,22 @@ export default function TaBuilder({ taId, user }: { taId: string; user: { id: st
       )}
 
       {editable && tab === "documents" && (
-        <DocumentsStep ta={ta} aiConfigured={aiConfigured} onUpdated={setTa} onNext={() => changeTab("details")} />
+        <DocumentsStep ta={ta} aiConfigured={aiConfigured} onUpdated={setTa} onUploaded={onFilesUploaded} onNext={() => changeTab("details")} />
       )}
-      {editable && tab === "details" && <DetailsStep ta={ta} patch={patchHeader} onNext={() => changeTab("steps")} />}
+      {editable && tab === "details" && (
+        <DetailsStep
+          ta={ta}
+          patch={patchHeader}
+          onNext={() => changeTab("steps")}
+          aiConfigured={aiConfigured}
+          extracting={extracting}
+          extractResult={extractResult}
+          extractError={extractError}
+          onExtract={() => void runExtract()}
+          onDismissResult={() => setExtractResult(null)}
+          onGoToDocuments={() => changeTab("documents")}
+        />
+      )}
       {editable && tab === "steps" && (
         <>
           <StepsEditor taId={ta.id} steps={ta.steps} register={register} onChange={setSteps} aiConfigured={aiConfigured} canSuggest />
@@ -291,18 +384,18 @@ function DocumentsStep({
   ta,
   aiConfigured,
   onUpdated,
+  onUploaded,
   onNext,
 }: {
   ta: TaFull;
   aiConfigured: boolean;
   onUpdated: (ta: TaFull) => void;
+  onUploaded: () => void;
   onNext: () => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [extracting, setExtracting] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  const [result, setResult] = useState<{ applied: string[]; kept: string[]; notes: string | null } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function upload(files: FileList | File[]) {
@@ -317,7 +410,13 @@ function DocumentsStep({
       const data = await res.json();
       if (data.errors?.length) setErrors(data.errors);
       else if (!res.ok) setErrors([data.error || "Upload failed"]);
-      if (data.files?.length) onUpdated({ ...ta, files: [...ta.files, ...data.files] });
+      if (data.files?.length) {
+        onUpdated({ ...ta, files: [...ta.files, ...data.files] });
+        // Something readable arrived — go straight to project details and
+        // fill them in from the documents. If some files were rejected,
+        // stay here so the PM sees why.
+        if (!data.errors?.length) onUploaded();
+      }
     } catch {
       setErrors(["Upload failed — check your connection and try again."]);
     } finally {
@@ -328,23 +427,6 @@ function DocumentsStep({
   async function remove(fileId: string) {
     const res = await fetch(`/api/tas/${ta.id}/files/${fileId}`, { method: "DELETE" });
     if (res.ok) onUpdated({ ...ta, files: ta.files.filter((f) => f.id !== fileId) });
-  }
-
-  async function extract() {
-    setExtracting(true);
-    setErrors([]);
-    setResult(null);
-    try {
-      const res = await fetch(`/api/tas/${ta.id}/extract`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Couldn't read the documents");
-      onUpdated(data.ta);
-      setResult({ applied: data.applied, kept: data.kept, notes: data.notes });
-    } catch (err) {
-      setErrors([(err as Error).message]);
-    } finally {
-      setExtracting(false);
-    }
   }
 
   return (
@@ -367,8 +449,9 @@ function DocumentsStep({
       >
         <p className="text-base font-medium text-neutral-800">{uploading ? "Uploading…" : "Drop the proposal and any supporting documents here"}</p>
         <p className="text-sm text-neutral-500 mt-1">
-          Accepted quote / proposal, scope of works, client emails (.eml), site notes, photos — anything with the job name, number,
-          site details or scope.
+          {aiConfigured
+            ? "The project details are filled in automatically from what you drop in — job name and number, site, contacts, scope, permits, plant, chemicals and PPE."
+            : "Accepted quote / proposal, scope of works, client emails (.eml), site notes, photos."}
         </p>
         <p className="text-xs text-neutral-400 mt-3">PDF · Word (.docx) · email (.eml) · text · images — or click to browse</p>
         <input
@@ -408,38 +491,20 @@ function DocumentsStep({
         </div>
       )}
 
-      {result && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <p className="font-medium">
-            {result.applied.length ? `Filled ${result.applied.length} field${result.applied.length === 1 ? "" : "s"} from the documents.` : "No new details found in the documents."}
-          </p>
-          {result.kept.length > 0 && (
-            <p className="text-xs mt-1 text-emerald-800">
-              Kept what you&apos;d already typed for: {result.kept.join(", ")} (the documents say something different — worth a check).
-            </p>
-          )}
-          {result.notes && <p className="text-xs mt-1 text-emerald-800">AI notes: {result.notes}</p>}
-          <button onClick={onNext} className="mt-2 rounded-md bg-emerald-600 text-white text-xs font-medium px-3 py-1.5 hover:bg-emerald-700">
-            Check the project details →
-          </button>
-        </div>
-      )}
-
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={extract}
-          disabled={extracting || ta.files.length === 0 || !aiConfigured}
-          className="rounded-lg bg-accent text-white text-sm font-medium px-4 py-2 hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {extracting ? "Reading documents… (~20s)" : "✦ Read documents & fill in details"}
-        </button>
-        <button onClick={onNext} className="text-sm text-neutral-600 hover:text-neutral-900">
-          {ta.files.length ? "Continue without reading →" : "Skip — fill in details manually →"}
-        </button>
+        {ta.files.length > 0 ? (
+          <button onClick={aiConfigured ? onUploaded : onNext} className="rounded-lg bg-accent text-white text-sm font-medium px-4 py-2 hover:bg-indigo-700">
+            {aiConfigured ? "✦ Fill in project details from these →" : "Continue to project details →"}
+          </button>
+        ) : (
+          <button onClick={onNext} className="text-sm text-neutral-600 hover:text-neutral-900">
+            No documents? Fill in the details manually →
+          </button>
+        )}
       </div>
       {!aiConfigured && (
         <p className="text-xs text-amber-700">
-          AI reading isn&apos;t available — ANTHROPIC_API_KEY isn&apos;t configured on the server. You can still fill the details manually.
+          Automatic reading isn&apos;t available — ANTHROPIC_API_KEY isn&apos;t configured on the server. You can still fill the details manually.
         </p>
       )}
     </div>
@@ -450,7 +515,29 @@ function DocumentsStep({
 // Step 2 — Project details
 // ---------------------------------------------------------------------------
 
-function DetailsStep({ ta, patch, onNext }: { ta: TaFull; patch: (p: HeaderPatch) => void; onNext: () => void }) {
+function DetailsStep({
+  ta,
+  patch,
+  onNext,
+  aiConfigured,
+  extracting,
+  extractResult,
+  extractError,
+  onExtract,
+  onDismissResult,
+  onGoToDocuments,
+}: {
+  ta: TaFull;
+  patch: (p: HeaderPatch) => void;
+  onNext: () => void;
+  aiConfigured: boolean;
+  extracting: boolean;
+  extractResult: ExtractResult | null;
+  extractError: string | null;
+  onExtract: () => void;
+  onDismissResult: () => void;
+  onGoToDocuments: () => void;
+}) {
   const ai = new Set(ta.aiFilledFields);
 
   const field = (key: keyof HeaderPatch, label: string, opts: { placeholder?: string; type?: string; wide?: boolean; area?: boolean } = {}) => (
@@ -481,6 +568,20 @@ function DetailsStep({ ta, patch, onNext }: { ta: TaFull; patch: (p: HeaderPatch
 
   return (
     <div className="max-w-4xl space-y-6">
+      <ExtractBanner
+        ta={ta}
+        aiConfigured={aiConfigured}
+        extracting={extracting}
+        result={extractResult}
+        error={extractError}
+        onExtract={onExtract}
+        onDismiss={onDismissResult}
+        onGoToDocuments={onGoToDocuments}
+        onUseDocumentValue={(key, value) => patch({ [key]: value } as HeaderPatch)}
+      />
+
+      {/* Locked while the documents are being read so the AI's answers can't overwrite typing mid-flight. */}
+      <fieldset disabled={extracting} className={`space-y-6 min-w-0 transition ${extracting ? "opacity-50 pointer-events-none" : ""}`}>
       <Section title="Job">
         {field("jobNumber", "Job number", { placeholder: "e.g. S34144" })}
         {field("taDate", "Date", { type: "date" })}
@@ -582,11 +683,134 @@ function DetailsStep({ ta, patch, onNext }: { ta: TaFull; patch: (p: HeaderPatch
         {field("reviewFrequency", "Review date / frequency", { wide: true })}
       </Section>
 
+      </fieldset>
+
       <div className="flex justify-end">
-        <button onClick={onNext} className="rounded-lg bg-accent text-white text-sm font-medium px-4 py-2 hover:bg-indigo-700">
+        <button onClick={onNext} disabled={extracting} className="rounded-lg bg-accent text-white text-sm font-medium px-4 py-2 hover:bg-indigo-700 disabled:opacity-50">
           Next: risks &amp; controls →
         </button>
       </div>
+    </div>
+  );
+}
+
+function ExtractBanner({
+  ta,
+  aiConfigured,
+  extracting,
+  result,
+  error,
+  onExtract,
+  onDismiss,
+  onGoToDocuments,
+  onUseDocumentValue,
+}: {
+  ta: TaFull;
+  aiConfigured: boolean;
+  extracting: boolean;
+  result: ExtractResult | null;
+  error: string | null;
+  onExtract: () => void;
+  onDismiss: () => void;
+  onGoToDocuments: () => void;
+  onUseDocumentValue: (key: string, value: unknown) => void;
+}) {
+  const [used, setUsed] = useState<string[]>([]);
+  const n = ta.files.length;
+
+  if (!aiConfigured) {
+    return n === 0 ? null : (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        Automatic reading of your documents isn&apos;t available — ANTHROPIC_API_KEY isn&apos;t configured on the server. Please fill the details in manually.
+      </div>
+    );
+  }
+
+  if (extracting) {
+    return (
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center gap-3">
+        <span className="h-4 w-4 shrink-0 rounded-full border-2 border-indigo-300 border-t-indigo-700 animate-spin" aria-hidden />
+        <div>
+          <p className="text-sm font-medium text-indigo-950">
+            Reading {n} document{n === 1 ? "" : "s"} and filling in the project details…
+          </p>
+          <p className="text-xs text-indigo-900/70">Usually 10–30 seconds. The form unlocks as soon as it&apos;s done.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p className="font-medium">Couldn&apos;t fill the details from your documents.</p>
+        <p className="text-xs mt-0.5 break-words">{error}</p>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <button onClick={onExtract} className="rounded-md bg-red-600 text-white text-xs font-medium px-3 py-1.5 hover:bg-red-700">Try again</button>
+          <span className="text-xs self-center text-red-700">or fill them in below.</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (result) {
+    const missing = EXPECTED_FROM_DOCS.filter((k) => !String(ta[k as keyof TaFull] ?? "").trim());
+    const conflicts = result.kept.filter((k) => !used.includes(k) && result.extracted[k] !== undefined);
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-medium">
+            {result.applied.length
+              ? `✦ Filled ${result.applied.length} field${result.applied.length === 1 ? "" : "s"} from your documents — marked ✦ AI below. Please check them.`
+              : "✦ Read your documents — no new details to add."}
+          </p>
+          <button onClick={onDismiss} className="text-emerald-700/60 hover:text-emerald-900 text-xs shrink-0" aria-label="Dismiss">✕</button>
+        </div>
+        {missing.length > 0 && (
+          <p className="text-xs mt-1.5 text-emerald-900/80">
+            Not found in the documents: {missing.map((k) => FIELD_LABELS[k] ?? k).join(", ")} — please add these.
+          </p>
+        )}
+        {conflicts.length > 0 && (
+          <div className="mt-2 space-y-1.5">
+            <p className="text-xs text-emerald-900/80">You&apos;d already filled these in, and the documents say something different:</p>
+            {conflicts.map((k) => (
+              <div key={k} className="flex flex-wrap items-center gap-2 rounded-md bg-white/70 border border-emerald-200 px-2.5 py-1.5 text-xs">
+                <span className="font-medium">{FIELD_LABELS[k] ?? k}:</span>
+                <span className="text-neutral-700 break-words min-w-0 flex-1">“{describeValue(k, result.extracted[k])}”</span>
+                <button
+                  onClick={() => {
+                    onUseDocumentValue(k, result.extracted[k]);
+                    setUsed((u) => [...u, k]);
+                  }}
+                  className="rounded border border-emerald-300 px-2 py-0.5 text-emerald-800 hover:bg-emerald-100 shrink-0"
+                >
+                  Use this
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {result.notes && <p className="text-xs mt-1.5 text-emerald-900/80">Note from the AI: {result.notes}</p>}
+      </div>
+    );
+  }
+
+  if (n === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/50 px-4 py-3 text-sm text-indigo-950 flex flex-wrap items-center justify-between gap-2">
+        <span>Have the proposal? Upload it and these details fill in automatically.</span>
+        <button onClick={onGoToDocuments} className="rounded-md bg-accent text-white text-xs font-medium px-3 py-1.5 hover:bg-indigo-700">Upload documents</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 text-sm text-indigo-950 flex flex-wrap items-center justify-between gap-2">
+      <span>
+        {n} document{n === 1 ? "" : "s"} uploaded. Fill in anything that&apos;s still blank from them?
+      </span>
+      <button onClick={onExtract} className="rounded-md bg-accent text-white text-xs font-medium px-3 py-1.5 hover:bg-indigo-700">✦ Fill from documents</button>
     </div>
   );
 }
