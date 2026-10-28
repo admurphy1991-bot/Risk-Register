@@ -44,7 +44,8 @@ function safeName(name: string) {
 }
 
 function taDir(taId: string) {
-  if (!/^TA-\d+$/.test(taId)) throw new Error("Invalid TA id");
+  // TAs and SSSPs share the supporting-document store.
+  if (!/^(TA|SSSP)-\d+$/.test(taId)) throw new Error("Invalid document owner id");
   return path.join(dataDir, "ta-files", taId);
 }
 

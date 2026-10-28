@@ -222,3 +222,51 @@ export const appSettings = sqliteTable("app_settings", {
   value: text("value").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+// ============================================================================
+// Chemical register (hazardous substances) — seeded from the Donesafe export,
+// re-importable from a fresh Donesafe CSV (upserts on Record ID).
+// ============================================================================
+export const chemicals = sqliteTable("chemicals", {
+  id: text("id").primaryKey(), // Donesafe Record ID, e.g. CHE0479 (or CHE-N#### for ones added here)
+  productName: text("product_name").notNull(),
+  status: text("status").notNull().default("Approved for Use"), // Approved for Use | Draft | No Longer in Use
+  unNumber: text("un_number").notNull().default(""), // e.g. UN3082 or "Not Classified"
+  classification: text("classification").notNull().default(""), // e.g. "Hazardous substance", "Dangerous good, Hazardous substance"
+  hazards: text("hazards").notNull().default("[]"), // JSON string[]: Environmental hazards | Health hazards | Physical hazards
+  location: text("location").notNull().default(""),
+  sdsFilename: text("sds_filename").notNull().default(""), // SDS file name as held in Donesafe
+  sdsDate: text("sds_date"), // ISO date of the SDS revision
+  sdsExpiry: text("sds_expiry"), // ISO; defaults to SDS date + 5 years
+  sdsStoredPath: text("sds_stored_path"), // SDS PDF uploaded into this app
+  notes: text("notes").notNull().default(""),
+  source: text("source").notNull().default("manual"), // donesafe | manual | ai
+  externalCreatedAt: text("external_created_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// ============================================================================
+// Site Specific Safety Plans (SSSP). Core columns for listing/search; the
+// section answers live in `data` (JSON, shape in src/lib/sssp-shared.ts).
+// Supporting documents and the event timeline reuse ta_files / ta_events,
+// keyed by the SSSP id (SSSP-0001) in their ta_id column.
+// ============================================================================
+export const sssps = sqliteTable("sssps", {
+  id: text("id").primaryKey(), // SSSP-0001
+  jobNumber: text("job_number").notNull().default(""),
+  projectName: text("project_name").notNull().default(""),
+  siteAddress: text("site_address").notNull().default(""),
+  mainContractor: text("main_contractor").notNull().default(""),
+  data: text("data").notNull().default("{}"),
+  status: text("status").notNull().default("draft"), // draft | submitted | changes_requested | approved | closed
+  preparedById: text("prepared_by_id"),
+  preparedByName: text("prepared_by_name").notNull().default(""),
+  aiFilledFields: text("ai_filled_fields").notNull().default("[]"),
+  submittedAt: text("submitted_at"),
+  reviewedAt: text("reviewed_at"),
+  reviewedByName: text("reviewed_by_name"),
+  reviewComment: text("review_comment"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});

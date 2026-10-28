@@ -233,6 +233,60 @@ the mounted volume (e.g. `/data/risk-register.db`) so uploads survive
 redeploys too. New tables are created automatically on start-up — no
 migration step.
 
+## Chemical register
+
+`/chemicals` — Sansom's hazardous substances, mastered in **Donesafe**. Seeded
+from the Donesafe export in `scripts/seed-chemicals.csv` (387 records as of
+08/10/26; also auto-loaded the first time the page is opened on an empty DB).
+
+- SDS expiry = the export's expiry column, or **SDS date + 5 years**; expired
+  and expiring-within-6-months SDSs are flagged (tiles + filter).
+- **Import Donesafe CSV** (H&S / admin) upserts on *Record ID*. Chemicals added
+  here first get a `CHE-L###` id and status *Draft*; when the same product
+  shows up in a later Donesafe import (matched by name) it takes over the
+  Donesafe ID and any SSSPs using it are updated.
+- Upload an SDS PDF per chemical (stored under `DATA_DIR/sds/`).
+- API: `GET /api/v1/chemicals`, `POST /api/v1/chemicals` with the Donesafe CSV
+  as the body (`text/csv`) — lets Make.com push a scheduled Donesafe export.
+
+## SSSP builder (Site Specific Safety Plan)
+
+`/sssps` → **New SSSP** (blank, or *start from a TA* — copies the project
+details, the TA's register risks, its chemicals matched to the chemical
+register, MEWP/harness inspections). Tabs: Sources & AI → Project → Site safety
+→ Site risks → Substances → Emergency → Review & submit.
+
+- **✦ Build SSSP with AI** reads the uploaded documents + linked TAs and drafts
+  the job-specific parts: project info, work types, the job-specific YES/N/A
+  answers, dust/noise/runoff controls, notifiable works, ERP, hospital, any
+  named contacts, the applicable Tactical/Procedural register risks (with a
+  reason each) and the chemical-register products (plus products *not* in the
+  register, which can be added as drafts in one click). It never overwrites
+  what a person typed; AI-filled fields are badged ✦ AI. Sansom-standard
+  answers (PPE, site rules, communications, staff) come from the template.
+- **Word output fills the real master template** (`templates/sssp-template.docx`
+  = "SSSP Template - MASTER Concrete Repairs"): checkbox content controls are
+  ticked, the M-Files job name/number fields set, the risk register table is
+  cut to the selected risks (ratings/controls from the app's register, coloured
+  by band), the hazardous-substance and safety-data tables list the selected
+  chemicals, emergency contacts/ERP/assembly point, WorkSafe notification page
+  (when notifiable), linked TAs under *Reviewed Task Analysis*, sign-off page
+  dates and PCBU 1. To change wording/layout, edit the template in Word and
+  replace the file — the filler finds rows by their text.
+- Same H&S workflow as TAs (submit → approve / request changes → close).
+  Supporting files and the timeline share the `ta_files` / `ta_events` tables
+  (keyed by the SSSP id).
+
+### Make.com for SSSPs
+
+SSSP events are `sssp.submitted`, `sssp.approved`, `sssp.changes_requested`,
+sent to the same webhook with the same `document` / `recipients` / `email` /
+`links` fields as the TA payload (plus an `sssp` block; `ta.reviewComment` is
+also set). In the scenario's router, change each route's filter from
+*event = ta.submitted* to *event* **ends with** *.submitted* (and likewise
+*.approved*, *.changes_requested*) and the existing emails/M-Files filing work
+for both.
+
 ## Project structure
 
 ```

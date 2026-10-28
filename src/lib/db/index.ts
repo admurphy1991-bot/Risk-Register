@@ -207,6 +207,42 @@ export function ensureSchema() {
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS chemicals (
+    id TEXT PRIMARY KEY,
+    product_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'Approved for Use',
+    un_number TEXT NOT NULL DEFAULT '',
+    classification TEXT NOT NULL DEFAULT '',
+    hazards TEXT NOT NULL DEFAULT '[]',
+    location TEXT NOT NULL DEFAULT '',
+    sds_filename TEXT NOT NULL DEFAULT '',
+    sds_date TEXT,
+    sds_expiry TEXT,
+    sds_stored_path TEXT,
+    notes TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'manual',
+    external_created_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sssps (
+    id TEXT PRIMARY KEY,
+    job_number TEXT NOT NULL DEFAULT '',
+    project_name TEXT NOT NULL DEFAULT '',
+    site_address TEXT NOT NULL DEFAULT '',
+    main_contractor TEXT NOT NULL DEFAULT '',
+    data TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'draft',
+    prepared_by_id TEXT,
+    prepared_by_name TEXT NOT NULL DEFAULT '',
+    ai_filled_fields TEXT NOT NULL DEFAULT '[]',
+    submitted_at TEXT,
+    reviewed_at TEXT,
+    reviewed_by_name TEXT,
+    review_comment TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS idx_ta_steps_ta ON ta_steps(ta_id);
   CREATE INDEX IF NOT EXISTS idx_ta_step_risks_ta ON ta_step_risks(ta_id);
   CREATE INDEX IF NOT EXISTS idx_ta_step_risks_risk ON ta_step_risks(risk_id);

@@ -13,13 +13,13 @@ import { PPE_OPTIONS, type TaHeader, type StepInput, type PlantItem, type Chemic
 
 export class AiConfigError extends Error {}
 
-function client() {
+export function client() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new AiConfigError("ANTHROPIC_API_KEY is not configured on the server.");
   return new Anthropic({ apiKey });
 }
 
-function model() {
+export function model() {
   return process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
 }
 
@@ -29,7 +29,7 @@ export function aiErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function sourceBlocks(taId: string): Promise<{ blocks: Anthropic.ContentBlockParam[]; count: number }> {
+export async function sourceBlocks(taId: string): Promise<{ blocks: Anthropic.ContentBlockParam[]; count: number }> {
   const files = await loadTaFilesForAi(taId);
   const blocks: Anthropic.ContentBlockParam[] = [];
   for (const f of files) {
@@ -49,7 +49,7 @@ async function sourceBlocks(taId: string): Promise<{ blocks: Anthropic.ContentBl
   return { blocks, count: files.length };
 }
 
-function forcedToolInput<T>(response: Anthropic.Message, toolName: string): T {
+export function forcedToolInput<T>(response: Anthropic.Message, toolName: string): T {
   const use = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === toolName);
   if (!use) throw new Error("The AI didn't return structured output — please try again.");
   return use.input as T;

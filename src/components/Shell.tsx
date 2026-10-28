@@ -11,6 +11,8 @@ const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/register", label: "Risk register" },
   { href: "/tas", label: "Task analyses" },
+  { href: "/sssps", label: "SSSPs" },
+  { href: "/chemicals", label: "Chemicals" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -34,14 +36,14 @@ export default function Shell({ user, children }: { user: SessionUser; children:
             <img src="/sansom-logo.jpg" alt="Sansom" className="h-5 w-auto" />
             <span className="font-medium text-xs text-neutral-500 tracking-tight hidden md:inline">Risk Register</span>
           </Link>
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="flex items-center gap-1 text-sm overflow-x-auto min-w-0">
             {NAV.map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`px-3 py-1.5 rounded-md transition ${
+                  className={`px-3 py-1.5 rounded-md transition whitespace-nowrap ${
                     active ? "bg-accent-soft text-accent font-medium" : "text-neutral-600 hover:bg-neutral-100"
                   }`}
                 >
