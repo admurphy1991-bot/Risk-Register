@@ -13,7 +13,14 @@ import { TA_STATUS_LABELS, getRegisterRiskMap, type TaFull } from "@/lib/ta";
 // addresses (M-Files inbox, H&S manager, the preparing PM) and ready-to-use
 // email subjects/bodies, so the Make scenario only has to route and send.
 
-export type TaWebhookEvent = "ta.submitted" | "ta.approved" | "ta.changes_requested" | "test";
+export type TaWebhookEvent =
+  | "ta.submitted"
+  | "ta.approved"
+  | "ta.changes_requested"
+  | "sssp.submitted"
+  | "sssp.approved"
+  | "sssp.changes_requested"
+  | "test";
 
 const secret = new TextEncoder().encode(process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me");
 

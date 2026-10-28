@@ -11,6 +11,7 @@ import { db, schema, ensureSchema } from "../src/lib/db";
 import { hashPassword } from "../src/lib/auth";
 import { uid } from "../src/lib/ids";
 import { computeScore } from "../src/lib/risk-scoring";
+import { importChemicalsCsv } from "../src/lib/chemicals";
 
 type RealRisk = {
   id: string;
@@ -151,6 +152,14 @@ async function main() {
     inserted++;
   }
   console.log(`Seeded ${inserted} risk records from ${jsonPath} (${existingIds.size} already present).`);
+
+  // --- Chemical register (Donesafe export). Insert-only: never overwrites
+  // edits or a newer import made from the app. ---
+  const chemPath = path.join(__dirname, "seed-chemicals.csv");
+  if (fs.existsSync(chemPath)) {
+    const res = importChemicalsCsv(fs.readFileSync(chemPath, "utf8"), { insertOnly: true });
+    console.log(`Chemical register: ${res.created} added, ${res.unchanged} already present.`);
+  }
 }
 
 main()
